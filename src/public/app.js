@@ -187,7 +187,6 @@ oauthButton.addEventListener('click', async () => {
 });
 
 window.addEventListener('message', async (event) => {
-  if (event.origin !== window.location.origin) return;
   if (event.data?.type !== 'shopify_oauth') return;
 
   await loadConfig();
@@ -200,6 +199,18 @@ window.addEventListener('message', async (event) => {
     alert(`Falha no OAuth Shopify: ${event.data.message || 'erro desconhecido'}`);
   }
 });
+
+function parseOauthResultFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const status = params.get('shopify_oauth');
+  if (!status) return null;
+
+  return {
+    ok: status === 'ok',
+    message: params.get('message') || '',
+    store: params.get('store') || ''
+  };
+}
 
 document.getElementById('test-webhook-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -217,6 +228,23 @@ async function boot() {
   await loadOauthStatus();
   await loadMappings();
   await loadLogs();
+
+  const oauthResult = parseOauthResultFromUrl();
+  if (oauthResult) {
+    await loadConfig();
+    await loadOauthStatus();
+    if (oauthResult.ok) {
+      alert(`Shopify conectado com sucesso (${oauthResult.store || 'loja'}).`);
+    } else {
+      alert(`Falha no OAuth Shopify: ${oauthResult.message || 'erro desconhecido'}`);
+    }
+
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('shopify_oauth');
+    cleanUrl.searchParams.delete('message');
+    cleanUrl.searchParams.delete('store');
+    window.history.replaceState({}, '', cleanUrl.toString());
+  }
 }
 
 boot().catch((error) => {

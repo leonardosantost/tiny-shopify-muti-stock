@@ -147,6 +147,9 @@ function buildAuthorizeUrl(store) {
 function renderOauthResultPage({ ok, message, store = '', scope = '' }) {
   const safeMessage = String(message || '').replace(/</g, '&lt;');
   const status = ok ? 'ok' : 'error';
+  const redirectUrl = `${env.baseUrl}/?shopify_oauth=${ok ? 'ok' : 'error'}&message=${encodeURIComponent(
+    message || ''
+  )}&store=${encodeURIComponent(store || '')}`;
   return `<!doctype html>
 <html lang="pt-BR">
   <head>
@@ -171,10 +174,12 @@ function renderOauthResultPage({ ok, message, store = '', scope = '' }) {
             scope: ${JSON.stringify(scope)},
             message: ${JSON.stringify(message || '')}
           },
-          window.location.origin
+          '*'
         );
+        setTimeout(() => window.close(), 350);
+      } else {
+        window.location.href = ${JSON.stringify(redirectUrl)};
       }
-      setTimeout(() => window.close(), 300);
     </script>
   </body>
 </html>`;
