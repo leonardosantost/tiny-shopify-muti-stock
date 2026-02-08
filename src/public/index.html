@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tiny ↔ Shopify Stock Sync</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>Tiny ↔ Shopify Stock Sync</h1>
+
+      <section class="card">
+        <h2>Configuração</h2>
+        <form id="config-form" class="grid">
+          <label>Tiny API Token <input name="tiny_api_token" type="password" /></label>
+          <label>Tiny formato <input name="tiny_api_format" value="json" /></label>
+          <label>Tiny webhook secret <input name="tiny_webhook_secret" type="password" /></label>
+          <label>Shopify store <input name="shopify_store" placeholder="sualoja.myshopify.com" /></label>
+          <label>Shopify access token <input name="shopify_access_token" type="password" /></label>
+          <label>Shopify client id <input name="shopify_client_id" /></label>
+          <label>Shopify client secret <input name="shopify_client_secret" type="password" /></label>
+          <label>Shopify OAuth scopes <input name="shopify_scopes" value="read_products,read_locations,read_inventory,write_inventory" /></label>
+          <label>Shopify redirect URI (opcional) <input name="shopify_redirect_uri" placeholder="https://seu-host/auth/shopify/callback" /></label>
+          <label>Shopify API version <input name="shopify_api_version" value="2026-01" /></label>
+          <label>Intervalo sync (min)
+            <input name="sync_interval_minutes" type="number" min="1" step="1" value="180" />
+          </label>
+          <button type="submit">Salvar configuração</button>
+        </form>
+        <div class="actions top-gap">
+          <button id="connect-shopify-oauth" type="button">Conectar Shopify (OAuth)</button>
+          <span id="oauth-status"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Mapeamento Depósito → Location</h2>
+        <div class="actions">
+          <button id="load-references" type="button">Carregar depósitos e locations</button>
+          <button id="run-full-sync" type="button">Executar full sync agora</button>
+        </div>
+
+        <form id="mapping-form" class="mapping-form">
+          <select id="tiny-deposito" required></select>
+          <select id="shopify-location" required></select>
+          <button type="submit">Salvar mapeamento</button>
+        </form>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Depósito Tiny</th>
+              <th>Location Shopify</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="mappings-body"></tbody>
+        </table>
+      </section>
+
+      <section class="card">
+        <h2>Teste Webhook Estoque</h2>
+        <form id="test-webhook-form" class="grid compact">
+          <label>SKU <input name="sku" /></label>
+          <label>ID produto Tiny <input name="idProduto" /></label>
+          <label>ID depósito Tiny <input name="idDeposito" /></label>
+          <label>Saldo <input name="saldo" type="number" /></label>
+          <button type="submit">Disparar teste</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Logs de sincronização</h2>
+        <div class="actions">
+          <button id="refresh-logs" type="button">Atualizar logs</button>
+        </div>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
