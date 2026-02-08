@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import fetch from 'node-fetch';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { env } from './lib/env.js';

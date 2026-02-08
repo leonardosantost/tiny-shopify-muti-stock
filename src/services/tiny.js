@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import { env } from '../lib/env.js';
 import { getConfigValue } from '../lib/db.js';
 

@@ -1,4 +1,3 @@
-import fetch from 'node-fetch';
 import { env } from '../lib/env.js';
 import { getConfigValue, getSkuCache, saveSkuCache } from '../lib/db.js';
 

@@ -22,6 +22,13 @@ npm run dev
 
 Servidor: `http://localhost:3000`
 
+## Deploy (importante)
+
+- Use Node `22` (arquivo `.nvmrc` incluído).
+- Em CI/container, prefira `npm ci` (install limpo).
+- Se for obrigatoriamente Node 24+, o `better-sqlite3` pode compilar do source, então o container precisa de toolchain:
+  - Debian/Ubuntu: `apt-get update && apt-get install -y python3 make g++`
+
 ## Webhooks
 
 Configure na Tiny os endpoints:
