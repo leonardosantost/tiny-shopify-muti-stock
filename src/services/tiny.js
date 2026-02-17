@@ -67,6 +67,7 @@ function parseTinyProductRow(row) {
   return {
     id: String(product.id ?? product.idProduto ?? ''),
     sku: product.sku ? String(product.sku).trim() : '',
+    codigo: product.codigo ? String(product.codigo).trim() : '',
     nome: product.nome || ''
   };
 }
@@ -106,7 +107,7 @@ export async function getTinyProductStock(productId) {
 
   return {
     productId: String(product.id ?? productId),
-    sku: String(product.sku || '').trim(),
+    sku: String(product.sku || product.codigo || '').trim(),
     nome: product.nome || '',
     deposits
   };
@@ -172,11 +173,16 @@ export async function discoverTinyDeposits(sampleProducts = 150) {
 
 export async function findTinyProductBySku(sku) {
   if (!sku) return null;
+  const needle = String(sku).trim().toLowerCase();
 
   let page = 1;
   while (true) {
     const { products, totalPages } = await listTinyProducts(page);
-    const matched = products.find((product) => product.sku === sku);
+    const matched = products.find((product) => {
+      const productSku = String(product.sku || '').trim().toLowerCase();
+      const productCodigo = String(product.codigo || '').trim().toLowerCase();
+      return productSku === needle || productCodigo === needle;
+    });
     if (matched) return matched;
 
     if (page >= totalPages) break;

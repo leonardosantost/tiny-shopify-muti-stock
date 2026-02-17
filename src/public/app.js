@@ -45,13 +45,8 @@ async function loadConfig() {
 
 async function loadOauthStatus() {
   const status = await api('/api/shopify/oauth/status');
-  if (status.connected) {
-    oauthStatus.textContent = `Conectado: ${status.store}`;
-    oauthButton.textContent = 'Reconectar Shopify';
-  } else {
-    oauthStatus.textContent = 'Não conectado';
-    oauthButton.textContent = 'Conectar Shopify';
-  }
+  oauthStatus.textContent = status.connected ? `Conectado: ${status.store}` : 'Não conectado';
+  oauthButton.textContent = status.connected ? 'Reconectar Shopify' : 'Conectar Shopify';
 
   if (!status.hasClientId || !status.hasClientSecret) {
     oauthStatus.textContent += ' (faltam client_id/client_secret)';
@@ -120,35 +115,26 @@ document.getElementById('run-full-sync').addEventListener('click', async () => {
 
 mappingForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const manualTinyId = String(document.getElementById('tiny-deposito-manual-id')?.value || '').trim();
-  const manualTinyNome = String(document.getElementById('tiny-deposito-manual-nome')?.value || '').trim();
-  const manualShopifyLocationId = String(
-    document.getElementById('shopify-location-manual-id')?.value || ''
-  ).trim();
-  const manualShopifyLocationNome = String(
-    document.getElementById('shopify-location-manual-nome')?.value || ''
-  ).trim();
 
-  if (!manualShopifyLocationId) {
-    alert('Preencha o ID da location Shopify.');
+  const tinyDepositoNome = String(document.getElementById('tiny-deposito-manual-nome')?.value || '').trim();
+  const shopifyLocationId = String(document.getElementById('shopify-location-manual-id')?.value || '').trim();
+
+  if (!tinyDepositoNome) {
+    alert('Preencha o nome exato do depósito Tiny.');
     return;
   }
 
-  const tinyDepositoId = manualTinyId;
-  const tinyDepositoNome = manualTinyNome || manualTinyId;
-
-  if (!tinyDepositoId) {
-    alert('Preencha o ID do depósito Tiny.');
+  if (!shopifyLocationId) {
+    alert('Preencha o ID da location Shopify.');
     return;
   }
 
   await api('/api/mappings', {
     method: 'POST',
     body: JSON.stringify({
-      tiny_deposito_id: tinyDepositoId,
       tiny_deposito_nome: tinyDepositoNome,
-      shopify_location_id: manualShopifyLocationId,
-      shopify_location_name: manualShopifyLocationNome || manualShopifyLocationId,
+      shopify_location_id: shopifyLocationId,
+      shopify_location_name: shopifyLocationId,
       active: true
     })
   });
@@ -177,20 +163,6 @@ oauthButton.addEventListener('click', async () => {
   window.location.href = data.url;
 });
 
-window.addEventListener('message', async (event) => {
-  if (event.data?.type !== 'shopify_oauth') return;
-
-  await loadConfig();
-  await loadOauthStatus();
-  await loadLogs();
-
-  if (event.data.ok) {
-    alert(`Shopify conectado com sucesso (${event.data.store}).`);
-  } else {
-    alert(`Falha no OAuth Shopify: ${event.data.message || 'erro desconhecido'}`);
-  }
-});
-
 function parseOauthResultFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const status = params.get('shopify_oauth');
@@ -206,12 +178,12 @@ function parseOauthResultFromUrl() {
 document.getElementById('test-webhook-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const payload = Object.fromEntries(new FormData(event.target).entries());
-  await api('/api/test/webhook-stock', {
+  await api('/api/test/sku', {
     method: 'POST',
     body: JSON.stringify(payload)
   });
   await loadLogs();
-  alert('Webhook de teste processado.');
+  alert('Teste de SKU processado.');
 });
 
 async function boot() {

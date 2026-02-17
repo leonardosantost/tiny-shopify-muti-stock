@@ -111,6 +111,12 @@ export function getMappingByDeposito(tinyDepositoId) {
   return db.prepare('SELECT * FROM mappings WHERE tiny_deposito_id = ?').get(String(tinyDepositoId));
 }
 
+export function getMappingByDepositoNome(tinyDepositoNome) {
+  return db
+    .prepare('SELECT * FROM mappings WHERE lower(trim(tiny_deposito_nome)) = lower(trim(?))')
+    .get(String(tinyDepositoNome || ''));
+}
+
 export function saveSkuCache(entry) {
   const stmt = db.prepare(`
     INSERT INTO sku_cache (

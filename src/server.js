@@ -15,16 +15,14 @@ import {
 } from './lib/db.js';
 import { getSchedulerStatus, restartScheduler, startScheduler } from './services/scheduler.js';
 import {
-  loadIntegrationReferences,
-  loadIntegrationReferencesWithOptions,
   runFullSync,
+  runSkuSync,
   syncFromSalesWebhook,
   syncFromStockWebhook
 } from './services/sync.js';
-import { listShopifyLocations } from './services/shopify.js';
 
 const app = express();
-const APP_BUILD = 'oauth-state-tolerant-2026-02-17';
+const APP_BUILD = 'simplified-deposit-name-flow-2026-02-17';
 const OAUTH_STATE_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_SHOPIFY_SCOPES = 'read_products,read_locations,read_inventory,write_inventory';
 
@@ -515,55 +513,40 @@ app.get('/auth/shopify/callback', async (req, res) => {
   }
 });
 
-app.get('/api/references', async (req, res) => {
-  try {
-    const forceRefresh = String(req.query.refresh || '') === '1';
-    const data = forceRefresh
-      ? await loadIntegrationReferencesWithOptions({ forceRefresh: true })
-      : await loadIntegrationReferences();
-    res.json(data);
-  } catch (error) {
-    addLog({
-      type: 'references',
-      status: 'error',
-      message: error.message,
-      context: null
-    });
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.get('/api/shopify/locations', async (req, res) => {
-  try {
-    const locations = await listShopifyLocations();
-    res.json({ locations });
-  } catch (error) {
-    addLog({
-      type: 'shopify_locations',
-      status: 'error',
-      message: error.message,
-      context: null
-    });
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
 app.get('/api/mappings', (req, res) => {
   res.json({ mappings: listMappings() });
 });
 
 app.post('/api/mappings', (req, res) => {
-  const mapping = req.body || {};
-  if (!mapping.tiny_deposito_id || !mapping.shopify_location_id) {
-    return res.status(400).json({ ok: false, error: 'tiny_deposito_id e shopify_location_id são obrigatórios' });
+  const mapping = { ...(req.body || {}) };
+  const tinyDepositoNome = normalizeText(mapping.tiny_deposito_nome);
+  const tinyDepositoId = tinyDepositoNome.toLowerCase();
+  const shopifyLocationId = normalizeText(mapping.shopify_location_id);
+  const shopifyLocationName = normalizeText(mapping.shopify_location_name) || shopifyLocationId;
+
+  if (!tinyDepositoNome || !shopifyLocationId) {
+    return res
+      .status(400)
+      .json({ ok: false, error: 'tiny_deposito_nome e shopify_location_id são obrigatórios' });
   }
 
-  upsertMapping(mapping);
+  upsertMapping({
+    ...mapping,
+    tiny_deposito_id: tinyDepositoId,
+    tiny_deposito_nome: tinyDepositoNome,
+    shopify_location_id: shopifyLocationId,
+    shopify_location_name: shopifyLocationName
+  });
   addLog({
     type: 'mapping',
     status: 'ok',
     message: 'Mapeamento salvo',
-    context: mapping
+    context: {
+      tiny_deposito_id: tinyDepositoId,
+      tiny_deposito_nome: tinyDepositoNome,
+      shopify_location_id: shopifyLocationId,
+      shopify_location_name: shopifyLocationName
+    }
   });
 
   return res.json({ ok: true });
@@ -642,17 +625,11 @@ app.post('/webhooks/tiny/sales', async (req, res) => {
   }
 });
 
-app.post('/api/test/webhook-stock', async (req, res) => {
-  const payload = {
-    dados: {
-      idProduto: req.body.idProduto || '',
-      sku: req.body.sku || '',
-      saldo: req.body.saldo ?? 0,
-      idDeposito: req.body.idDeposito || ''
-    }
-  };
-
-  const result = await syncFromStockWebhook(payload);
+app.post('/api/test/sku', async (req, res) => {
+  const result = await runSkuSync({
+    sku: normalizeText(req.body.sku),
+    trigger: 'manual_test'
+  });
   res.json(result);
 });
 

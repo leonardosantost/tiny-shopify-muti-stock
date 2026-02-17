@@ -1,7 +1,7 @@
 # Tiny ↔ Shopify Stock Sync
 
 Sincroniza estoque da Tiny por depósito para locations do Shopify, com:
-- sincronização periódica (default: 3h);
+- sincronização periódica incremental (default: 3h);
 - sincronização pontual por webhook de estoque da Tiny;
 - gatilho de reconciliação por webhook de vendas;
 - frontend simples para configurar credenciais, mapeamentos e ver logs.
@@ -41,15 +41,19 @@ Se usar segredo, defina `tiny_webhook_secret` (na tela ou `.env`) e envie no hea
 
 ## Fluxo de sincronização
 
-1. Full sync manual ou scheduler:
+1. Full sync manual:
 - `produtos.pesquisa.php` (lista produtos)
 - `produto.obter.estoque.php` (saldo por depósito)
 - atualiza `available` no Shopify via `inventorySetQuantities` na location mapeada.
 
-2. Webhook de estoque Tiny:
+2. Cron incremental (scheduler):
+- `lista.atualizacoes.estoque`
+- processa apenas SKUs/de depósitos com atualização desde o último cursor salvo.
+
+3. Webhook de estoque Tiny:
 - atualiza SKU imediatamente quando recebe `idProduto/sku/saldo/idDeposito`.
 
-3. Webhook de vendas:
+4. Webhook de vendas:
 - extrai SKUs do payload;
 - busca saldo atual na Tiny;
 - reconcilia no Shopify.
@@ -59,11 +63,10 @@ Se usar segredo, defina `tiny_webhook_secret` (na tela ou `.env`) e envie no hea
 A tela principal (`/`) permite:
 - salvar credenciais Tiny/Shopify e intervalo (min);
 - gerar `SHOPIFY_ACCESS_TOKEN` por OAuth (com `client_id` + `client_secret`);
-- informar depósito Tiny manualmente (ID e nome) no mapeamento;
-- informar location Shopify manualmente (ID e nome) no mapeamento;
+- mapear depósito pelo nome exato no Tiny para uma location ID do Shopify;
 - criar/remover mapeamento depósito→location;
 - executar full sync manual;
-- testar webhook de estoque;
+- testar sincronização de estoque por SKU;
 - acompanhar logs.
 
 ## Shopify OAuth (simples)
@@ -95,13 +98,12 @@ Redirect padrão usado pelo backend (se não configurar um custom):
 - `GET /api/shopify/oauth/start`
 - `GET /auth/shopify/start`
 - `GET /auth/shopify/callback`
-- `GET /api/references`
-- `GET /api/shopify/locations`
 - `GET /api/mappings`
 - `POST /api/mappings`
 - `DELETE /api/mappings/:tinyDepositoId`
 - `GET /api/logs`
 - `POST /api/sync/full`
+- `POST /api/test/sku`
 - `POST /webhooks/tiny/stock`
 - `POST /webhooks/tiny/sales`
 

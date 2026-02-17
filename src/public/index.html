@@ -44,13 +44,11 @@
         <div class="actions">
           <button id="run-full-sync" type="button">Executar full sync agora</button>
         </div>
-        <p class="help">Mapeamento manual para evitar chamadas extras de API.</p>
+        <p class="help">Informe apenas o nome exato do depósito Tiny e o ID da location Shopify.</p>
 
         <form id="mapping-form" class="mapping-form">
-          <input id="tiny-deposito-manual-id" placeholder="ID depósito Tiny" required />
-          <input id="tiny-deposito-manual-nome" placeholder="Nome depósito Tiny" />
+          <input id="tiny-deposito-manual-nome" placeholder="Nome depósito Tiny (exato)" required />
           <input id="shopify-location-manual-id" placeholder="ID location Shopify" required />
-          <input id="shopify-location-manual-nome" placeholder="Nome location Shopify" />
           <button type="submit">Salvar mapeamento</button>
         </form>
 
@@ -68,12 +66,9 @@
       </section>
 
       <section class="card">
-        <h2>Teste Webhook Estoque</h2>
+        <h2>Teste de Estoque por SKU</h2>
         <form id="test-webhook-form" class="grid compact">
           <label>SKU <input name="sku" /></label>
-          <label>ID produto Tiny <input name="idProduto" /></label>
-          <label>ID depósito Tiny <input name="idDeposito" /></label>
-          <label>Saldo <input name="saldo" type="number" /></label>
           <button type="submit">Disparar teste</button>
         </form>
       </section>

@@ -102,12 +102,6 @@ button.delete {
   font-size: 14px;
 }
 
-#references-note {
-  margin: 0 0 8px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .mapping-form {
   display: flex;
   gap: 8px;

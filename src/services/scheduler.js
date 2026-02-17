@@ -1,6 +1,6 @@
 import { getConfigValue, addLog } from '../lib/db.js';
 import { env } from '../lib/env.js';
-import { runFullSync } from './sync.js';
+import { runIncrementalSync } from './sync.js';
 
 let timer = null;
 
@@ -24,7 +24,7 @@ export function restartScheduler() {
   const intervalMs = intervalMinutes * 60 * 1000;
 
   timer = setInterval(() => {
-    runFullSync({ trigger: 'scheduler' }).catch((error) => {
+    runIncrementalSync({ trigger: 'scheduler' }).catch((error) => {
       addLog({
         type: 'scheduler',
         status: 'error',
