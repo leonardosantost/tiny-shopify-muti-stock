@@ -1,11 +1,10 @@
 const configForm = document.getElementById('config-form');
 const mappingForm = document.getElementById('mapping-form');
-const tinySelect = document.getElementById('tiny-deposito');
-const shopifySelect = document.getElementById('shopify-location');
 const mappingsBody = document.getElementById('mappings-body');
 const logsPre = document.getElementById('logs');
 const oauthStatus = document.getElementById('oauth-status');
 const oauthButton = document.getElementById('connect-shopify-oauth');
+const oauthCallback = document.getElementById('oauth-callback');
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -48,36 +47,17 @@ async function loadOauthStatus() {
   const status = await api('/api/shopify/oauth/status');
   if (status.connected) {
     oauthStatus.textContent = `Conectado: ${status.store}`;
+    oauthButton.textContent = 'Reconectar Shopify';
   } else {
     oauthStatus.textContent = 'Não conectado';
+    oauthButton.textContent = 'Conectar Shopify';
   }
 
   if (!status.hasClientId || !status.hasClientSecret) {
     oauthStatus.textContent += ' (faltam client_id/client_secret)';
   }
-}
 
-function renderSelect(select, items, placeholder, valueKey = 'id', labelKey = 'nome') {
-  select.innerHTML = '';
-
-  const first = document.createElement('option');
-  first.value = '';
-  first.textContent = placeholder;
-  select.appendChild(first);
-
-  for (const item of items) {
-    const option = document.createElement('option');
-    option.value = item[valueKey];
-    option.textContent = item[labelKey] || item.name || item.id;
-    option.dataset.name = item[labelKey] || item.name || '';
-    select.appendChild(option);
-  }
-}
-
-async function loadReferences() {
-  const data = await api('/api/references');
-  renderSelect(tinySelect, data.deposits, 'Selecione depósito Tiny', 'id', 'nome');
-  renderSelect(shopifySelect, data.locations, 'Selecione location Shopify', 'id', 'name');
+  oauthCallback.textContent = `Callback OAuth esperado: ${status.callbackUrl || '-'}`;
 }
 
 function mappingRow(mapping) {
@@ -132,10 +112,6 @@ configForm.addEventListener('submit', async (event) => {
   alert('Configuração salva.');
 });
 
-document.getElementById('load-references').addEventListener('click', async () => {
-  await loadReferences();
-});
-
 document.getElementById('run-full-sync').addEventListener('click', async () => {
   const result = await api('/api/sync/full', { method: 'POST', body: '{}' });
   await loadLogs();
@@ -144,21 +120,35 @@ document.getElementById('run-full-sync').addEventListener('click', async () => {
 
 mappingForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const tinyOption = tinySelect.selectedOptions[0];
-  const shopifyOption = shopifySelect.selectedOptions[0];
+  const manualTinyId = String(document.getElementById('tiny-deposito-manual-id')?.value || '').trim();
+  const manualTinyNome = String(document.getElementById('tiny-deposito-manual-nome')?.value || '').trim();
+  const manualShopifyLocationId = String(
+    document.getElementById('shopify-location-manual-id')?.value || ''
+  ).trim();
+  const manualShopifyLocationNome = String(
+    document.getElementById('shopify-location-manual-nome')?.value || ''
+  ).trim();
 
-  if (!tinyOption?.value || !shopifyOption?.value) {
-    alert('Selecione depósito e location.');
+  if (!manualShopifyLocationId) {
+    alert('Preencha o ID da location Shopify.');
+    return;
+  }
+
+  const tinyDepositoId = manualTinyId;
+  const tinyDepositoNome = manualTinyNome || manualTinyId;
+
+  if (!tinyDepositoId) {
+    alert('Preencha o ID do depósito Tiny.');
     return;
   }
 
   await api('/api/mappings', {
     method: 'POST',
     body: JSON.stringify({
-      tiny_deposito_id: tinyOption.value,
-      tiny_deposito_nome: tinyOption.dataset.name,
-      shopify_location_id: shopifyOption.value,
-      shopify_location_name: shopifyOption.dataset.name,
+      tiny_deposito_id: tinyDepositoId,
+      tiny_deposito_nome: tinyDepositoNome,
+      shopify_location_id: manualShopifyLocationId,
+      shopify_location_name: manualShopifyLocationNome || manualShopifyLocationId,
       active: true
     })
   });
@@ -171,6 +161,12 @@ mappingForm.addEventListener('submit', async (event) => {
 document.getElementById('refresh-logs').addEventListener('click', loadLogs);
 
 oauthButton.addEventListener('click', async () => {
+  const payload = Object.fromEntries(new FormData(configForm).entries());
+  await api('/api/config', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
   const shop = String(configForm.elements.namedItem('shopify_store')?.value || '').trim();
   if (!shop) {
     alert('Preencha o Shopify store antes de conectar.');
@@ -178,12 +174,7 @@ oauthButton.addEventListener('click', async () => {
   }
 
   const data = await api(`/api/shopify/oauth/start?store=${encodeURIComponent(shop)}`);
-  const popup = window.open(data.url, 'shopifyOAuth', 'width=680,height=760');
-
-  if (!popup) {
-    window.location.href = data.url;
-    return;
-  }
+  window.location.href = data.url;
 });
 
 window.addEventListener('message', async (event) => {

@@ -2,7 +2,8 @@ import {
   addLog,
   getConfigValue,
   getMappingByDeposito,
-  listActiveMappings
+  listActiveMappings,
+  setConfigValue
 } from '../lib/db.js';
 import {
   discoverTinyDeposits,
@@ -17,6 +18,7 @@ import {
 } from './shopify.js';
 
 let fullSyncInProgress = false;
+const TINY_DEPOSITS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 function safeNumber(value, fallback = 0) {
   const n = Number(value);
@@ -58,7 +60,7 @@ async function updateSkuOnMapping({ sku, quantity, mapping, reason, source }) {
 }
 
 async function syncSingleProductForMapping(product, mapping, options = {}) {
-  const tinyStock = await getTinyProductStock(product.id);
+  const tinyStock = options.stock ?? await getTinyProductStock(product.id);
   const deposit = tinyStock.deposits.find((d) => String(d.depositoId) === String(mapping.tiny_deposito_id));
   if (!deposit) {
     return { status: 'skipped', reason: 'deposit_not_present' };
@@ -104,11 +106,29 @@ export async function runFullSync({ trigger = 'manual' } = {}) {
       if (!products.length) break;
 
       for (const product of products) {
+        let stock = null;
+        try {
+          stock = await getTinyProductStock(product.id);
+        } catch (error) {
+          skipped += mappings.length;
+          logAndStore({
+            type: 'full_sync_item',
+            status: 'error',
+            message: error.message,
+            context: {
+              productId: product.id,
+              sku: product.sku
+            }
+          });
+          continue;
+        }
+
         for (const mapping of mappings) {
           try {
             const result = await syncSingleProductForMapping(product, mapping, {
               reason: 'correction',
-              source: 'full_sync'
+              source: 'full_sync',
+              stock
             });
             if (result.status === 'updated') updated += 1;
             if (result.status === 'not_found') notFound += 1;
@@ -313,12 +333,57 @@ export async function syncFromSalesWebhook(payload) {
 }
 
 export async function loadIntegrationReferences() {
-  const [deposits, locations] = await Promise.all([
-    discoverTinyDeposits(),
-    listShopifyLocations()
-  ]);
+  return loadIntegrationReferencesWithOptions({ forceRefresh: false });
+}
 
-  return { deposits, locations };
+function getCachedTinyDeposits() {
+  const raw = getConfigValue('tiny_deposits_cache_json', '');
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function loadIntegrationReferencesWithOptions({ forceRefresh = false } = {}) {
+  const cachedDeposits = getCachedTinyDeposits();
+  const cachedAt = Number(getConfigValue('tiny_deposits_cache_at', '0'));
+  const cacheAgeMs = cachedAt ? Date.now() - cachedAt : Number.POSITIVE_INFINITY;
+  const canUseCache = cachedDeposits && cacheAgeMs < TINY_DEPOSITS_CACHE_TTL_MS;
+
+  let deposits = cachedDeposits || [];
+  let tinySource = 'cache';
+  let warning = null;
+
+  if (!canUseCache || forceRefresh) {
+    try {
+      deposits = await discoverTinyDeposits(40);
+      setConfigValue('tiny_deposits_cache_json', JSON.stringify(deposits));
+      setConfigValue('tiny_deposits_cache_at', String(Date.now()));
+      tinySource = 'tiny_api';
+    } catch (error) {
+      if (!cachedDeposits) {
+        throw error;
+      }
+      warning = `Tiny indisponível no momento. Usando cache: ${error.message}`;
+      tinySource = 'cache_fallback';
+    }
+  }
+
+  const locations = await listShopifyLocations();
+  return {
+    deposits,
+    locations,
+    meta: {
+      tinySource,
+      warning,
+      cacheAgeMs: Number.isFinite(cacheAgeMs) ? cacheAgeMs : null
+    }
+  };
 }
 
 export function getRuntimeConfig() {

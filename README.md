@@ -59,7 +59,8 @@ Se usar segredo, defina `tiny_webhook_secret` (na tela ou `.env`) e envie no hea
 A tela principal (`/`) permite:
 - salvar credenciais Tiny/Shopify e intervalo (min);
 - gerar `SHOPIFY_ACCESS_TOKEN` por OAuth (com `client_id` + `client_secret`);
-- carregar depósitos Tiny e locations Shopify;
+- informar depósito Tiny manualmente (ID e nome) no mapeamento;
+- informar location Shopify manualmente (ID e nome) no mapeamento;
 - criar/remover mapeamento depósito→location;
 - executar full sync manual;
 - testar webhook de estoque;
@@ -95,6 +96,7 @@ Redirect padrão usado pelo backend (se não configurar um custom):
 - `GET /auth/shopify/start`
 - `GET /auth/shopify/callback`
 - `GET /api/references`
+- `GET /api/shopify/locations`
 - `GET /api/mappings`
 - `POST /api/mappings`
 - `DELETE /api/mappings/:tinyDepositoId`

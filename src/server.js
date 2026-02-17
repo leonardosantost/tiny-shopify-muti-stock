@@ -16,14 +16,16 @@ import {
 import { getSchedulerStatus, restartScheduler, startScheduler } from './services/scheduler.js';
 import {
   loadIntegrationReferences,
+  loadIntegrationReferencesWithOptions,
   runFullSync,
   syncFromSalesWebhook,
   syncFromStockWebhook
 } from './services/sync.js';
+import { listShopifyLocations } from './services/shopify.js';
 
 const app = express();
-const oauthStates = new Map();
-const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const APP_BUILD = 'oauth-state-tolerant-2026-02-17';
+const OAUTH_STATE_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_SHOPIFY_SCOPES = 'read_products,read_locations,read_inventory,write_inventory';
 
 app.use(cors());
@@ -75,31 +77,111 @@ function normalizeShopDomain(rawShop) {
   return trimmed.endsWith('.myshopify.com') ? trimmed : `${trimmed}.myshopify.com`;
 }
 
-function getOauthConfig() {
+function getRequestBaseUrl(req) {
+  const forwardedProto = normalizeText(req.headers['x-forwarded-proto']).split(',')[0];
+  const forwardedHost = normalizeText(req.headers['x-forwarded-host']).split(',')[0];
+  const host = forwardedHost || normalizeText(req.headers.host);
+  const proto = forwardedProto || (req.protocol || 'https');
+  if (!host) return env.baseUrl;
+  return `${proto}://${host}`;
+}
+
+function buildDefaultCallbackUrl(baseUrl = env.baseUrl) {
+  return `${baseUrl}/auth/shopify/callback`;
+}
+
+function resolveOauthRedirectUri(baseUrl = env.baseUrl) {
+  const configured = normalizeText(getConfigValue('shopify_redirect_uri', env.shopify.redirectUri));
+  const fallback = buildDefaultCallbackUrl(baseUrl);
+  if (!configured) return fallback;
+
+  try {
+    const configuredUrl = new URL(configured);
+    const baseUrlParsed = new URL(baseUrl);
+
+    // Avoid cross-instance callback issues (localhost vs production, different hosts).
+    if (configuredUrl.host !== baseUrlParsed.host) {
+      return fallback;
+    }
+
+    return configuredUrl.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+function getOauthConfig(baseUrl = env.baseUrl) {
   const clientId = getConfigValue('shopify_client_id', env.shopify.clientId);
   const clientSecret = getConfigValue('shopify_client_secret', env.shopify.clientSecret);
   const scopes = getConfigValue('shopify_scopes', env.shopify.scopes || DEFAULT_SHOPIFY_SCOPES);
-  const redirectUri = getConfigValue(
-    'shopify_redirect_uri',
-    env.shopify.redirectUri || `${env.baseUrl}/auth/shopify/callback`
-  );
+  const redirectUri = resolveOauthRedirectUri(baseUrl);
 
   return { clientId, clientSecret, scopes, redirectUri };
 }
 
-function putOauthState(state, store) {
-  oauthStates.set(state, {
-    store,
-    expiresAt: Date.now() + OAUTH_STATE_TTL_MS
-  });
+function toBase64Url(text) {
+  return Buffer.from(text, 'utf8').toString('base64url');
 }
 
-function consumeOauthState(state) {
-  const item = oauthStates.get(state);
-  oauthStates.delete(state);
-  if (!item) return null;
-  if (item.expiresAt < Date.now()) return null;
-  return item;
+function fromBase64Url(encoded) {
+  return Buffer.from(encoded, 'base64url').toString('utf8');
+}
+
+function getOauthStateSecret(clientSecret) {
+  return getConfigValue('shopify_oauth_state_secret', clientSecret || '');
+}
+
+function buildSignedOauthState(store, clientSecret) {
+  const payload = {
+    v: 1,
+    ts: Date.now(),
+    nonce: randomBytes(12).toString('hex'),
+    store
+  };
+  const encodedPayload = toBase64Url(JSON.stringify(payload));
+  const signature = createHmac('sha256', getOauthStateSecret(clientSecret))
+    .update(encodedPayload)
+    .digest('hex');
+
+  return `${encodedPayload}.${signature}`;
+}
+
+function validateSignedOauthState(state, expectedStore, clientSecret) {
+  if (!state || typeof state !== 'string' || !state.includes('.')) {
+    return { ok: false, reason: 'state_missing' };
+  }
+
+  const [encodedPayload, providedSignature] = state.split('.', 2);
+  const expectedSignature = createHmac('sha256', getOauthStateSecret(clientSecret))
+    .update(encodedPayload)
+    .digest('hex');
+
+  const left = Buffer.from(expectedSignature, 'utf8');
+  const right = Buffer.from(providedSignature || '', 'utf8');
+  if (left.length !== right.length || !timingSafeEqual(left, right)) {
+    return { ok: false, reason: 'state_signature' };
+  }
+
+  try {
+    const payload = JSON.parse(fromBase64Url(encodedPayload));
+    const issuedAt = Number(payload.ts || 0);
+    const stateStore = normalizeShopDomain(payload.store || '');
+    if (!issuedAt || !stateStore) {
+      return { ok: false, reason: 'state_malformed' };
+    }
+
+    if (Date.now() - issuedAt > OAUTH_STATE_TTL_MS) {
+      return { ok: false, reason: 'state_expired' };
+    }
+
+    if (stateStore !== expectedStore) {
+      return { ok: false, reason: 'state_store_mismatch' };
+    }
+
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: 'state_malformed' };
+  }
 }
 
 function validateShopifyHmac(query, clientSecret) {
@@ -119,8 +201,8 @@ function validateShopifyHmac(query, clientSecret) {
   return timingSafeEqual(left, right);
 }
 
-function buildAuthorizeUrl(store) {
-  const { clientId, clientSecret, scopes, redirectUri } = getOauthConfig();
+function buildAuthorizeUrl(store, baseUrl = env.baseUrl) {
+  const { clientId, clientSecret, scopes, redirectUri } = getOauthConfig(baseUrl);
   if (!store) {
     throw new Error('shopify_store obrigatório para OAuth');
   }
@@ -131,8 +213,7 @@ function buildAuthorizeUrl(store) {
     throw new Error('shopify_client_secret não configurado');
   }
 
-  const state = randomBytes(24).toString('hex');
-  putOauthState(state, store);
+  const state = buildSignedOauthState(store, clientSecret);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -144,10 +225,10 @@ function buildAuthorizeUrl(store) {
   return `https://${store}/admin/oauth/authorize?${params.toString()}`;
 }
 
-function renderOauthResultPage({ ok, message, store = '', scope = '' }) {
+function renderOauthResultPage({ ok, message, store = '', scope = '', baseUrl = env.baseUrl }) {
   const safeMessage = String(message || '').replace(/</g, '&lt;');
   const status = ok ? 'ok' : 'error';
-  const redirectUrl = `${env.baseUrl}/?shopify_oauth=${ok ? 'ok' : 'error'}&message=${encodeURIComponent(
+  const redirectUrl = `${baseUrl}/?shopify_oauth=${ok ? 'ok' : 'error'}&message=${encodeURIComponent(
     message || ''
   )}&store=${encodeURIComponent(store || '')}`;
   return `<!doctype html>
@@ -289,11 +370,17 @@ app.post('/api/config', (req, res) => {
 });
 
 app.get('/api/status', (req, res) => {
-  res.json({ scheduler: getSchedulerStatus() });
+  res.json({ scheduler: getSchedulerStatus(), build: APP_BUILD });
+});
+
+app.get('/api/build', (req, res) => {
+  res.json({ build: APP_BUILD });
 });
 
 app.get('/api/shopify/oauth/status', (req, res) => {
   const cfg = getConfigObject();
+  const baseUrl = getRequestBaseUrl(req);
+  const oauthCfg = getOauthConfig(baseUrl);
   const token = cfg.shopify_access_token || '';
   const store = normalizeShopDomain(cfg.shopify_store || env.shopify.store);
   const scopes = cfg.shopify_installed_scopes || cfg.shopify_scopes || env.shopify.scopes;
@@ -303,14 +390,16 @@ app.get('/api/shopify/oauth/status', (req, res) => {
     store,
     scopes: scopes || DEFAULT_SHOPIFY_SCOPES,
     hasClientId: Boolean(cfg.shopify_client_id || env.shopify.clientId),
-    hasClientSecret: Boolean(cfg.shopify_client_secret || env.shopify.clientSecret)
+    hasClientSecret: Boolean(cfg.shopify_client_secret || env.shopify.clientSecret),
+    callbackUrl: oauthCfg.redirectUri
   });
 });
 
 app.get('/api/shopify/oauth/start', (req, res) => {
   try {
+    const baseUrl = getRequestBaseUrl(req);
     const requested = normalizeShopDomain(req.query.store || getConfigValue('shopify_store', env.shopify.store));
-    const url = buildAuthorizeUrl(requested);
+    const url = buildAuthorizeUrl(requested, baseUrl);
     res.json({ ok: true, url });
   } catch (error) {
     res.status(400).json({ ok: false, error: error.message });
@@ -319,32 +408,57 @@ app.get('/api/shopify/oauth/start', (req, res) => {
 
 app.get('/auth/shopify/start', (req, res) => {
   try {
+    const baseUrl = getRequestBaseUrl(req);
     const requested = normalizeShopDomain(req.query.store || getConfigValue('shopify_store', env.shopify.store));
-    const url = buildAuthorizeUrl(requested);
+    const url = buildAuthorizeUrl(requested, baseUrl);
     res.redirect(url);
   } catch (error) {
-    res.status(400).send(renderOauthResultPage({ ok: false, message: error.message }));
+    res
+      .status(400)
+      .send(renderOauthResultPage({ ok: false, message: error.message, baseUrl: getRequestBaseUrl(req) }));
   }
 });
 
 app.get('/auth/shopify/callback', async (req, res) => {
-  const { clientId, clientSecret } = getOauthConfig();
+  const baseUrl = getRequestBaseUrl(req);
+  const { clientId, clientSecret } = getOauthConfig(baseUrl);
   const code = normalizeText(req.query.code);
   const shop = normalizeShopDomain(req.query.shop);
   const state = normalizeText(req.query.state);
 
-  if (!code || !shop || !state) {
-    return res.status(400).send(renderOauthResultPage({ ok: false, message: 'Callback OAuth incompleto' }));
-  }
-
-  const savedState = consumeOauthState(state);
-  if (!savedState || savedState.store !== shop) {
-    return res.status(400).send(renderOauthResultPage({ ok: false, message: 'State inválido ou expirado' }));
+  if (!code || !shop) {
+    return res
+      .status(400)
+      .send(renderOauthResultPage({ ok: false, message: 'Callback OAuth incompleto', baseUrl }));
   }
 
   if (!validateShopifyHmac(req.query, clientSecret)) {
-    return res.status(401).send(renderOauthResultPage({ ok: false, message: 'Assinatura HMAC inválida' }));
+    return res
+      .status(401)
+      .send(renderOauthResultPage({ ok: false, message: 'Assinatura HMAC inválida', baseUrl }));
   }
+
+    const stateValidation = state
+      ? validateSignedOauthState(state, shop, clientSecret)
+      : { ok: false, reason: 'state_missing' };
+    if (!stateValidation.ok) {
+      const configuredStore = normalizeShopDomain(getConfigValue('shopify_store', env.shopify.store));
+      if (configuredStore && configuredStore !== shop) {
+        addLog({
+          type: 'shopify_oauth',
+          status: 'warning',
+          message: 'Store do callback diferente da configurada, mas seguindo para atualizar conexão',
+          context: { configuredStore, callbackStore: shop }
+        });
+      }
+
+      addLog({
+        type: 'shopify_oauth',
+        status: 'warning',
+        message: 'State OAuth inválido/ausente, seguindo com HMAC válido',
+        context: { reason: stateValidation.reason, shop }
+      });
+    }
 
   try {
     const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
@@ -384,7 +498,8 @@ app.get('/auth/shopify/callback', async (req, res) => {
         ok: true,
         message: `Token salvo para ${shop}`,
         store: shop,
-        scope: tokenPayload.scope || ''
+        scope: tokenPayload.scope || '',
+        baseUrl
       })
     );
   } catch (error) {
@@ -396,17 +511,35 @@ app.get('/auth/shopify/callback', async (req, res) => {
     });
     return res
       .status(500)
-      .send(renderOauthResultPage({ ok: false, message: error.message, store: shop }));
+      .send(renderOauthResultPage({ ok: false, message: error.message, store: shop, baseUrl }));
   }
 });
 
 app.get('/api/references', async (req, res) => {
   try {
-    const data = await loadIntegrationReferences();
+    const forceRefresh = String(req.query.refresh || '') === '1';
+    const data = forceRefresh
+      ? await loadIntegrationReferencesWithOptions({ forceRefresh: true })
+      : await loadIntegrationReferences();
     res.json(data);
   } catch (error) {
     addLog({
       type: 'references',
+      status: 'error',
+      message: error.message,
+      context: null
+    });
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get('/api/shopify/locations', async (req, res) => {
+  try {
+    const locations = await listShopifyLocations();
+    res.json({ locations });
+  } catch (error) {
+    addLog({
+      type: 'shopify_locations',
       status: 'error',
       message: error.message,
       context: null
@@ -530,6 +663,7 @@ app.listen(env.port, () => {
   const webhookStock = `${env.baseUrl}/webhooks/tiny/stock`;
   const webhookSales = `${env.baseUrl}/webhooks/tiny/sales`;
   console.log(`Servidor em http://localhost:${env.port}`);
+  console.log(`Build: ${APP_BUILD}`);
   console.log(`Webhook Tiny estoque: ${webhookStock}`);
   console.log(`Webhook Tiny vendas: ${webhookSales}`);
 });
